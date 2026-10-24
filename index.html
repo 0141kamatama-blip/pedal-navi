@@ -117,10 +117,29 @@ body.navigating #mapStyle { display: flex; top: calc(var(--banner-h, 150px) + 10
 @media (min-width: 760px) {
   .sheet { left: 16px; right: auto; bottom: auto; top: 16px; width: 380px; max-height: calc(100% - 32px); border-radius: 14px; }
   body.navigating .sheet { top: auto; bottom: 16px; }
+  body.navigating #plan:not(.open) { bottom: 16px; border-radius: 14px; box-shadow: 0 2px 12px rgb(0 0 0 / .18); }
+  body.navigating #nav.sheet { bottom: calc(var(--plan-h, 0px) + 24px); }
 }
 .brand { display: flex; align-items: baseline; gap: 10px; }
 .brand h1 { margin: 0; font-size: 20px; letter-spacing: .04em; }
-.brand span { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; }
+.brand .badge { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; }
+.mini-only { display: none !important; }
+body.navigating .mini-only { display: inline-flex !important; }
+body.navigating #planMini { display: block !important; }
+#planMini { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+#planToggle { margin-left: auto; padding: 6px 12px; font-size: 13px; }
+/* 案内中: ルート設定は画面下の細いバーにたたむ。開いたときは案内パネルと入れ替わる */
+body.navigating #plan:not(.open) { top: auto; bottom: 0; max-height: none; padding-top: 8px; border-radius: 0; box-shadow: 0 -1px 0 var(--line); gap: 0; }
+body.navigating #plan:not(.open) > :not(.brand) { display: none !important; }
+body.navigating #plan:not(.open) .brand h1, body.navigating #plan:not(.open) .brand .badge { display: none; }
+body.navigating #plan:not(.open) .brand { align-items: center; }
+body.navigating #plan.open { max-height: min(70%, calc(100% - var(--banner-h, 150px) - 16px)); }
+body.plan-open #simDock, body.plan-open #mapStyle, body.plan-open #recenter { display: none !important; }
+body.navigating #plan.open #planMini { display: none !important; }
+body.navigating #nav.sheet { bottom: var(--plan-h, 0px); }
+body.plan-open #nav { display: none !important; }
+body.navigating #startRow { display: none !important; }
+#gpsInfo { font-variant-numeric: tabular-nums; }
 .field { display: grid; gap: 4px; }
 .field > label, .field > .flabel, .opt > label, .opt > span { font-size: 12px; color: var(--muted); letter-spacing: .08em; }
 .row { display: flex; gap: 6px; min-width: 0; align-items: center; }
@@ -227,7 +246,11 @@ body.navigating #toast { top: calc(var(--banner-h, 150px) + 150px); }
 
 <!-- 計画モード -->
 <section id="plan" class="sheet" aria-label="ルート設定">
-  <div class="brand"><h1>ペダルナビ</h1><span>試作版</span></div>
+  <div class="brand">
+    <h1>ペダルナビ</h1><span class="badge">試作版</span>
+    <span id="planMini" class="mini-only"></span>
+    <button class="btn mini-only" id="planToggle" type="button" aria-expanded="false" aria-controls="plan">ルート設定 ▴</button>
+  </div>
 
   <div class="field">
     <label for="from">出発地</label>
@@ -332,6 +355,11 @@ body.navigating #toast { top: calc(var(--banner-h, 150px) + 150px); }
     <button class="btn primary" id="startGps" type="button">GPSで案内開始</button>
     <button class="btn" id="startSim" type="button">シミュレーション</button>
   </div>
+  <details id="devOpts">
+    <summary>検証用の設定</summary>
+    <label class="check"><input type="checkbox" id="showSim"> 机上テスト用のシミュレーションを使う</label>
+    <label class="check"><input type="checkbox" id="showGps"> 案内中にGPSの精度とルートからのずれを表示する</label>
+  </details>
   <p class="safety"><strong>走行中は画面を見ずに音声案内を使ってください。</strong>スマホはハンドルに固定し、手に持って操作しないこと。案内は参考情報です。実際の標識・信号・交通ルールに従ってください。</p>
 </section>
 
@@ -347,6 +375,7 @@ body.navigating #toast { top: calc(var(--banner-h, 150px) + 150px); }
     <button class="btn" id="overview" type="button">全体を見る</button>
     <button class="btn danger" id="stop" type="button">案内終了</button>
   </div>
+  <p class="hint" id="gpsInfo" hidden></p>
   <p class="hint" id="vvCredit" hidden></p>
 </section>
 
@@ -750,10 +779,13 @@ const S = {
   follow: true, followZoom: 17, lastTouch: 0, muted: false, watchId: null, wakeLock: null,
   sim: null,
   pref: { bikeType: 'City', useHills: '0.5', useRoads: '0.5', mapStyle: 'simple', voiceURI: '', rate: '1',
-          ttsEngine: 'device', vvUrl: 'http://127.0.0.1:50021', vvSpeaker: '' },
+          ttsEngine: 'device', vvUrl: 'http://127.0.0.1:50021', vvSpeaker: '',
+          showSim: null, showGps: false },
 };
 try { Object.assign(S.pref, JSON.parse(localStorage.getItem('pedalnavi.pref') || '{}')); } catch (e) {}
 const savePref = () => { try { localStorage.setItem('pedalnavi.pref', JSON.stringify(S.pref)); } catch (e) {} };
+// シミュレーションは、指で操作する端末(スマホ)では最初から非表示にする
+if (S.pref.showSim == null) S.pref.showSim = !window.matchMedia('(pointer: coarse)').matches;
 
 const $ = id => document.getElementById(id);
 
@@ -907,7 +939,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
 
 // 地図タップで地点指定
 map.on('click', e => {
-  if (S.mode !== 'plan') return;
+  if (S.mode === 'nav' && !$('plan').classList.contains('open')) return;
   const p = [e.latlng.lat, e.latlng.lng];
   const box = document.createElement('div');
   box.className = 'pin-popup';
@@ -934,14 +966,42 @@ function resumeFollow() {
 ['touchstart', 'wheel', 'mousedown', 'dblclick', 'keydown'].forEach(ev => map.getContainer().addEventListener(ev, pauseFollow, { passive: true }));
 // 下のパネルの高さをCSSへ渡す(拡大縮小ボタンがパネルに隠れないように)
 function syncSheetHeight() {
-  const sheet = [$('plan'), $('nav')].find(el => !el.hidden);
-  const h = sheet && window.innerWidth < 760 ? sheet.offsetHeight : 0;
-  document.documentElement.style.setProperty('--sheet-h', `${h}px`);
+  const plan = $('plan'), nav = $('nav'), root = document.documentElement.style;
+  const navMode = document.body.classList.contains('navigating');
+  const planOpen = plan.classList.contains('open');
+  const planH = plan.hidden ? 0 : plan.offsetHeight;
+  const navH = nav.hidden ? 0 : nav.offsetHeight;
+  root.setProperty('--plan-h', `${navMode && !planOpen ? planH : 0}px`);
+  let h = 0;
+  if (window.innerWidth < 760) h = navMode ? (planOpen ? planH : planH + navH) : planH;
+  root.setProperty('--sheet-h', `${h}px`);
   const bn = $('banner');
   if (!bn.hidden) document.documentElement.style.setProperty('--banner-h', `${bn.offsetHeight}px`);
 }
 if ('ResizeObserver' in window) { const ro = new ResizeObserver(syncSheetHeight); ro.observe($('plan')); ro.observe($('nav')); ro.observe($('banner')); }
 window.addEventListener('resize', syncSheetHeight);
+function setPlanOpen(open) {
+  $('plan').classList.toggle('open', open);
+  document.body.classList.toggle('plan-open', open && S.mode === 'nav');
+  $('planToggle').textContent = open ? '最小化 ▾' : 'ルート設定 ▴';
+  $('planToggle').setAttribute('aria-expanded', String(open));
+  syncSheetHeight();
+}
+function updatePlanMini() {
+  $('planMini').textContent = S.toName ? `目的地: ${S.toName}` : '';
+}
+$('planToggle').onclick = () => setPlanOpen(!$('plan').classList.contains('open'));
+// 案内中にルートを作り直したら、そのルートで案内を続ける
+function adoptPlanDuringNav() {
+  if (S.mode !== 'nav' || !S.planRoute) return;
+  S.route = S.planRoute; drawRoute(); resetGuidance();
+  S.baseProgress = 0; S.offset = { joinAt: 0, baseAt: 0 }; S.everOnRoute = false;
+  if (S.sim) { S.sim.s = 0; S.sim.detour = null; }
+  updatePlanMini(); setPlanOpen(false);
+  speak('新しいルートで案内します', true);
+  S.follow = true; $('recenter').hidden = true;
+  if (S.pos) track();
+}
 $('avoidClear').onclick = () => { S.avoid = []; drawAvoid(); if (S.planRoute && S.source === 'search') findRoute(); };
 
 /* =========================================================
@@ -970,7 +1030,8 @@ function setTo(p, name) {
   invalidateRoute(); drawMarkers();
 }
 function invalidateRoute() {
-  S.planRoute = S.route = null; drawRoute();
+  S.planRoute = null;
+  if (S.mode !== 'nav') { S.route = null; drawRoute(); }
   $('summary').hidden = true; $('startRow').hidden = true;
   $('routeBtn').disabled = !(S.from && S.to);
 }
@@ -1140,9 +1201,11 @@ async function findRoute() {
   if (!(S.from && S.to)) return;
   const btn = $('routeBtn'); btn.disabled = true; btn.textContent = '検索中…';
   try {
-    S.planRoute = S.route = await fetchRoute([S.from, S.to], null);
-    drawRoute(); fitRoute();
+    const nav = S.mode === 'nav' && S.pos;
+    S.planRoute = await fetchRoute([nav ? S.pos : S.from, S.to], nav ? S.heading : null);
     showSummary(S.planRoute, S.avoid.length ? `通らない地点 ${S.avoid.length} か所を避けています` : '');
+    if (S.mode === 'nav') adoptPlanDuringNav();
+    else { S.route = S.planRoute; drawRoute(); fitRoute(); }
   } catch (e) {
     toast(e.message, 5000);
   } finally {
@@ -1215,8 +1278,9 @@ async function buildFromGpx() {
     R = routeFromTrack(g.raw);
     if (!note) note = 'GPXの軌跡どおりに案内します(曲がり角は形から判定)';
   }
-  S.planRoute = S.route = R;
-  drawRoute(); fitRoute(); showSummary(R, note);
+  S.planRoute = R; showSummary(R, note);
+  if (S.mode === 'nav') adoptPlanDuringNav();
+  else { S.route = R; drawRoute(); fitRoute(); }
   status.textContent = `「${g.name}」を読み込みました(${(rawLen / 1000).toFixed(1)} km)。点線が元のGPXです。`;
   btn.disabled = false; btn.textContent = 'ルートを作り直す';
 }
@@ -1406,7 +1470,8 @@ async function startNav(useSim) {
   S.mode = 'nav'; S.follow = true; S.followZoom = 17; S.lastTouch = 0; resetGuidance();
   S.baseProgress = 0; S.offset = { joinAt: 0, baseAt: 0 }; S.everOnRoute = false;
   document.body.classList.add('navigating');
-  $('plan').hidden = true; $('nav').hidden = false; $('banner').hidden = false; syncSheetHeight();
+  $('nav').hidden = false; $('banner').hidden = false; updatePlanMini(); setPlanOpen(false);
+  $('gpsInfo').hidden = useSim || !S.pref.showGps;
   $('simDock').hidden = !useSim; $('simPanel').hidden = true; $('simToggle').setAttribute('aria-expanded', 'false');
   $('recenter').hidden = true;
   map.closePopup();
@@ -1428,7 +1493,8 @@ function stopNav(arrived = false) {
   S.wakeLock = null;
   document.body.classList.remove('navigating');
   $('simDock').hidden = true;
-  $('plan').hidden = false; $('nav').hidden = true; $('banner').hidden = true; $('offroute').hidden = true; $('recenter').hidden = true; syncSheetHeight();
+  $('nav').hidden = true; $('banner').hidden = true; $('offroute').hidden = true; $('recenter').hidden = true; $('gpsInfo').hidden = true;
+  setPlanOpen(false);
   if (arrived) toast('目的地に到着しました');
   S.route = S.planRoute; drawRoute(); fitRoute();
 }
@@ -1486,6 +1552,7 @@ function track() {
     $('bThen').hidden = false; $('bThen').textContent = `その先すぐ ${mvInfo(n2.type).s}`;
   } else $('bThen').hidden = true;
 
+  if (!$('gpsInfo').hidden) $('gpsInfo').textContent = `GPS精度 ±${S.acc != null ? Math.round(S.acc) : '–'}m ・ ルートからのずれ ${Math.round(snap.dist)}m`;
   $('remDist').textContent = (remain / 1000).toFixed(remain >= 10000 ? 0 : 1);
   const secLeft = R.total ? R.time * (remain / R.total) : 0;
   const eta = new Date(Date.now() + secLeft * 1000);
@@ -1531,6 +1598,13 @@ async function reroute() {
 }
 
 $('startGps').onclick = () => startNav(false);
+function applyDevPrefs() {
+  $('showSim').checked = !!S.pref.showSim; $('showGps').checked = !!S.pref.showGps;
+  $('startSim').hidden = !S.pref.showSim;
+}
+$('showSim').onchange = e => { S.pref.showSim = e.target.checked; savePref(); applyDevPrefs(); };
+$('showGps').onchange = e => { S.pref.showGps = e.target.checked; savePref(); };
+applyDevPrefs();
 $('startSim').onclick = () => startNav(true);
 $('stop').onclick = () => { if (hasTTS) speechSynthesis.cancel(); stopNav(false); };
 $('mute').onclick = () => {
