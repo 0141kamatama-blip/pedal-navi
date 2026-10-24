@@ -287,10 +287,10 @@ body.navigating #toast { top: calc(var(--banner-h, 150px) + 150px); }
     </div>
   </div>
   <div class="field">
-    <label for="stop">立ち寄り地点(道の駅など)</label>
+    <label for="stopQ">立ち寄り地点(道の駅など)</label>
     <div class="row">
-      <input id="stop" type="search" placeholder="例: 道の駅 / 地図をタップでも追加" autocomplete="off" enterkeyhint="search">
-      <button class="btn" id="stopGo" type="button">検索</button>
+      <input id="stopQ" type="search" placeholder="例: 道の駅 / 地図をタップでも追加" autocomplete="off" enterkeyhint="search">
+      <button class="btn" id="stopQGo" type="button">検索</button>
     </div>
     <ol id="stopList" hidden></ol>
   </div>
@@ -1198,10 +1198,10 @@ async function search(which) {
   list.hidden = false; list.innerHTML = '<li><button type="button" disabled>検索中…</button></li>';
   try {
     // 立ち寄り地点は、いま地図に表示している範囲の中から探す(「道の駅」だけでも近くのものが出る)
-    const rs = await geocode(q, which === 'stop');
+    const rs = await geocode(q, which === 'stopQ');
     list.innerHTML = '';
     if (!rs.length) {
-      list.innerHTML = which === 'stop'
+      list.innerHTML = which === 'stopQ'
         ? '<li><button type="button" disabled>表示中の地図の範囲には見つかりませんでした。地図を動かすか縮小してから、もう一度検索してください。</button></li>'
         : '<li><button type="button" disabled>見つかりませんでした。別の言い方で試すか、地図をタップしてください。</button></li>';
       return;
@@ -1215,7 +1215,7 @@ async function search(which) {
       btn.append(b, s);
       btn.onclick = () => {
         const p = [parseFloat(r.lat), parseFloat(r.lon)];
-        if (which === 'stop') { addStop(p, name); $('stop').value = ''; }
+        if (which === 'stopQ') { addStop(p, name); $('stopQ').value = ''; }
         else which === 'from' ? setFrom(p, name) : setTo(p, name);
         list.hidden = true; map.setView(p, Math.max(map.getZoom(), 15));
       };
@@ -1226,8 +1226,8 @@ async function search(which) {
   }
 }
 $('fromGo').onclick = () => search('from');
-$('stopGo').onclick = () => search('stop');
-$('stop').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); search('stop'); } });
+$('stopQGo').onclick = () => search('stopQ');
+$('stopQ').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); search('stopQ'); } });
 $('toGo').onclick = () => search('to');
 ['from', 'to'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); search(id); } }));
 ['from', 'to'].forEach(id => $(id).addEventListener('input', () => $(id).classList.remove('set')));
