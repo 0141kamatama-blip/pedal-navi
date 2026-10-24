@@ -113,6 +113,8 @@ body.navigating #mapStyle { display: flex; top: calc(var(--banner-h, 150px) + 10
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
   display: grid; gap: 12px;
+  /* 中身が多くても各行を縮めない(縮むと検索結果などが潰れて見えなくなる) */
+  grid-auto-rows: max-content; align-content: start;
 }
 @media (min-width: 760px) {
   .sheet { left: 16px; right: auto; bottom: auto; top: 16px; width: 380px; max-height: calc(100% - 32px); border-radius: 14px; }
@@ -170,6 +172,9 @@ input.set { border-color: var(--route); background: var(--surface); }
 .btn:disabled { opacity: .5; cursor: default; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .actions .btn { flex: 1; padding: 11px 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 12px; font-size: 13px; }
+.chips button:hover { border-color: #d98b00; }
 #stopList { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; counter-reset: stop; }
 #stopList li { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; border: 1px solid var(--line); border-left: 4px solid #d98b00; border-radius: 0 8px 8px 0; font-size: 14px; counter-increment: stop; }
 #stopList li::before { content: counter(stop); font: 700 15px/1 var(--f-num); color: #d98b00; min-width: 1em; }
@@ -265,7 +270,7 @@ body.navigating #toast { top: calc(var(--banner-h, 150px) + 150px); }
 <section id="plan" class="sheet" aria-label="ルート設定">
   <button class="grab" id="planGrab" type="button" aria-label="ルート設定を広げる・たたむ"><span class="bar"></span></button>
   <div class="brand">
-    <h1>ペダルナビ</h1><span class="badge">試作版</span>
+    <h1>ペダルナビ</h1><span class="badge" id="ver">試作版 10/25 02:50</span>
     <span class="peek-hint" id="peekHint">上へスワイプで設定を表示</span>
     <span id="planMini" class="mini-only"></span>
     <button class="btn mini-only" id="planToggle" type="button" aria-expanded="false" aria-controls="plan">ルート設定 ▴</button>
@@ -289,8 +294,15 @@ body.navigating #toast { top: calc(var(--banner-h, 150px) + 150px); }
   <div class="field">
     <label for="stopQ">立ち寄り地点(道の駅など)</label>
     <div class="row">
-      <input id="stopQ" type="search" placeholder="例: 道の駅 / 地図をタップでも追加" autocomplete="off" enterkeyhint="search">
+      <input id="stopQ" type="search" placeholder="例: 道の駅、コンビニ、店名" autocomplete="off" enterkeyhint="search">
       <button class="btn" id="stopQGo" type="button">検索</button>
+    </div>
+    <div class="chips" id="poiChips" role="group" aria-label="ルート沿いを探す">
+      <button type="button" data-q="道の駅">道の駅</button>
+      <button type="button" data-q="コンビニ">コンビニ</button>
+      <button type="button" data-q="トイレ">トイレ</button>
+      <button type="button" data-q="カフェ">カフェ</button>
+      <button type="button" data-q="自転車店">自転車店</button>
     </div>
     <ol id="stopList" hidden></ol>
   </div>
@@ -1191,6 +1203,92 @@ async function geocode(q, bounded = false) {
   if (!res.ok) throw new Error(`検索サーバーが応答しません(${res.status})`);
   return res.json();
 }
+/* ---------------------------------------------------------
+   立ち寄り地点の検索(Overpass API: OpenStreetMapのデータを直接検索)
+   --------------------------------------------------------- */
+const POI_PRESETS = {
+  '道の駅': { f: 'nwr["name"~"道の駅"]', r: 1500 },
+  'コンビニ': { f: 'nwr["shop"="convenience"]', r: 300 },
+  'トイレ': { f: 'nwr["amenity"="toilets"]', r: 300 },
+  'カフェ': { f: 'nwr["amenity"="cafe"]', r: 400 },
+  '自転車店': { f: 'nwr["shop"="bicycle"]', r: 1000 },
+};
+async function overpassAlongRoute(text) {
+  const key = text.trim();
+  const preset = POI_PRESETS[key];
+  const esc = v => v.replace(/[\\"]/g, '\\$&').replace(/[.*+?^${}()|[\]]/g, '\\$&');
+  const filter = preset ? preset.f : `nwr["name"~"${esc(key)}"]`;
+  const radius = preset ? preset.r : 1000;
+  const R = S.coreRoute || S.planRoute;
+  let area;
+  if (R) {
+    // ルートの線に沿って半径radius以内を探す
+    const line = sampleEven(simplify(R.pts, 30), 120).map(p => `${p[0].toFixed(5)},${p[1].toFixed(5)}`).join(',');
+    area = `(around:${radius},${line})`;
+  } else {
+    const b = map.getBounds();
+    area = `(${b.getSouth().toFixed(5)},${b.getWest().toFixed(5)},${b.getNorth().toFixed(5)},${b.getEast().toFixed(5)})`;
+  }
+  const ql = `[out:json][timeout:25];${filter}${area};out center 80;`;
+  const res = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: `data=${encodeURIComponent(ql)}`,
+  });
+  if (res.status === 429 || res.status === 504) throw new Error('検索サーバーが混み合っています。少し待ってから試してください');
+  if (!res.ok) throw new Error(`検索サーバーが応答しません(${res.status})`);
+  const j = await res.json();
+  const items = (j.elements || []).map(e => {
+    const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
+    if (lat == null || lon == null) return null;
+    const t = e.tags || {};
+    return { p: [lat, lon], name: t.name || t.brand || key, sub: [t.brand && t.name ? t.brand : '', t['addr:city'] || ''].filter(Boolean).join(' ') };
+  }).filter(Boolean);
+  // ルートの何km地点か、ルートから何m離れているかを付けて、進む順に並べる
+  if (R) {
+    items.forEach(it => { const sn = snapToRoute(R, it.p, 0); it.along = sn.along; it.off = sn.dist; });
+    items.sort((a, b) => a.along - b.along);
+  }
+  // 同じ施設が点と建物で二重に出ることがあるので、近すぎる同名のものはまとめる
+  return items.filter((it, i) => !items.slice(0, i).some(o => o.name === it.name && dist(o.p, it.p) < 80)).slice(0, 30);
+}
+async function searchStops(text) {
+  const q = (text ?? $('stopQ').value).trim();
+  if (!q) { $('stopQ').focus(); return; }
+  const list = $('results');
+  list.hidden = false; list.innerHTML = '<li><button type="button" disabled>ルート沿いを検索中…</button></li>';
+  let items = [], how = S.coreRoute || S.planRoute ? 'ルート沿い' : '表示中の地図の範囲';
+  try {
+    items = await overpassAlongRoute(q);
+  } catch (e) {
+    console.warn(e); toast(`ルート沿いの検索に失敗しました: ${e.message}`, 5000);
+  }
+  if (!items.length && !POI_PRESETS[q]) {
+    // 名前で見つからなければ、通常の地名検索も試す
+    try {
+      const rs = await geocode(q);
+      items = rs.map(r => ({ p: [parseFloat(r.lat), parseFloat(r.lon)], name: r.name || r.display_name.split(',')[0], sub: r.display_name }));
+      how = '地名検索';
+    } catch (e) { console.warn(e); }
+  }
+  list.innerHTML = '';
+  if (!items.length) {
+    list.innerHTML = `<li><button type="button" disabled>${how}に「${q.replace(/[<>&"]/g, '')}」は見つかりませんでした。${S.coreRoute || S.planRoute ? '' : '先にルートを作ると、ルート沿いを探せます。'}</button></li>`;
+    return;
+  }
+  items.forEach(it => {
+    const li = document.createElement('li'), btn = document.createElement('button');
+    btn.type = 'button';
+    const b = document.createElement('b'); b.textContent = it.name;
+    const sm = document.createElement('small');
+    sm.textContent = it.along != null
+      ? `ルートの ${(it.along / 1000).toFixed(1)} km 地点・ルートから ${it.off < 1000 ? Math.round(it.off / 10) * 10 + ' m' : (it.off / 1000).toFixed(1) + ' km'}${it.sub ? '・' + it.sub : ''}`
+      : (it.sub || '');
+    btn.append(b, sm);
+    btn.onclick = () => { addStop(it.p, it.name); $('stopQ').value = ''; list.hidden = true; };
+    li.append(btn); list.append(li);
+  });
+}
+$('poiChips').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { $('stopQ').value = b.dataset.q; searchStops(b.dataset.q); } });
+
 async function search(which) {
   const input = $(which), q = input.value.trim();
   if (!q) { input.focus(); return; }
@@ -1226,8 +1324,8 @@ async function search(which) {
   }
 }
 $('fromGo').onclick = () => search('from');
-$('stopQGo').onclick = () => search('stopQ');
-$('stopQ').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); search('stopQ'); } });
+$('stopQGo').onclick = () => searchStops();
+$('stopQ').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); searchStops(); } });
 $('toGo').onclick = () => search('to');
 ['from', 'to'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); search(id); } }));
 ['from', 'to'].forEach(id => $(id).addEventListener('input', () => $(id).classList.remove('set')));
@@ -1832,7 +1930,10 @@ $('showSim').onchange = e => { S.pref.showSim = e.target.checked; savePref(); ap
 $('showGps').onchange = e => { S.pref.showGps = e.target.checked; savePref(); };
 applyDevPrefs();
 $('startSim').onclick = () => startNav(true);
-$('stop').onclick = () => { if (hasTTS) speechSynthesis.cancel(); stopNav(false); };
+$('stop').addEventListener('click', () => {
+  try { if (hasTTS) speechSynthesis.cancel(); VV.audio.pause(); } catch (e) {}
+  stopNav(false);
+});
 $('mute').onclick = () => {
   S.muted = !S.muted;
   if (S.muted && hasTTS) speechSynthesis.cancel();
